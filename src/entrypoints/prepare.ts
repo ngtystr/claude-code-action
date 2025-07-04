@@ -59,6 +59,7 @@ async function run() {
       repository: `${context.repository.owner}/${context.repository.repo}`,
       prNumber: context.entityNumber.toString(),
       isPR: context.isPR,
+      triggerUsername: context.actor,
     });
 
     // Step 8: Setup branch
@@ -114,23 +115,30 @@ async function run() {
 
     // Step 11: Create prompt file
     await createPrompt(
-      finalCommentId,
-      branchInfo.defaultBranch,
+      commentId,
+      branchInfo.baseBranch,
       branchInfo.claudeBranch,
       githubData,
       context,
     );
 
     // Step 11: Get MCP configuration
-    const mcpConfig = await prepareMcpConfig(
+    const additionalMcpConfig = process.env.MCP_CONFIG || "";
+    const mcpConfig = await prepareMcpConfig({
       githubToken,
-      context.repository.owner,
-      context.repository.repo,
-      branchInfo.currentBranch,
-    );
+      owner: context.repository.owner,
+      repo: context.repository.repo,
+      branch: branchInfo.currentBranch,
+      additionalMcpConfig,
+      claudeCommentId: commentId.toString(),
+      allowedTools: context.inputs.allowedTools,
+    });
     core.setOutput("mcp_config", mcpConfig);
   } catch (error) {
-    core.setFailed(`Prepare step failed with error: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    core.setFailed(`Prepare step failed with error: ${errorMessage}`);
+    // Also output the clean error message for the action to capture
+    core.setOutput("prepare_error", errorMessage);
     process.exit(1);
   }
 }

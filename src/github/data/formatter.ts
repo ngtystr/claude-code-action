@@ -6,10 +6,7 @@ import type {
   GitHubReview,
 } from "../types";
 import type { GitHubFileWithSHA } from "./fetcher";
-
-export function stripHtmlComments(text: string): string {
-  return text.replace(/<!--[\s\S]*?-->/g, "");
-}
+import { sanitizeContent } from "../utils/sanitizer";
 
 export function formatContext(
   contextData: GitHubPullRequest | GitHubIssue,
@@ -37,12 +34,13 @@ export function formatBody(
   body: string,
   imageUrlMap: Map<string, string>,
 ): string {
-  let processedBody = stripHtmlComments(body);
+  let processedBody = body;
 
-  // Replace image URLs with local paths
   for (const [originalUrl, localPath] of imageUrlMap) {
     processedBody = processedBody.replaceAll(originalUrl, localPath);
   }
+
+  processedBody = sanitizeContent(processedBody);
 
   return processedBody;
 }
@@ -53,14 +51,15 @@ export function formatComments(
 ): string {
   return comments
     .map((comment) => {
-      let body = stripHtmlComments(comment.body);
+      let body = comment.body;
 
-      // Replace image URLs with local paths if we have a mapping
       if (imageUrlMap && body) {
         for (const [originalUrl, localPath] of imageUrlMap) {
           body = body.replaceAll(originalUrl, localPath);
         }
       }
+
+      body = sanitizeContent(body);
 
       return `[${comment.author.login} at ${comment.createdAt}]: ${body}`;
     })
@@ -78,6 +77,19 @@ export function formatReviewComments(
   const formattedReviews = reviewData.nodes.map((review) => {
     let reviewOutput = `[Review by ${review.author.login} at ${review.submittedAt}]: ${review.state}`;
 
+    if (review.body && review.body.trim()) {
+      let body = review.body;
+
+      if (imageUrlMap) {
+        for (const [originalUrl, localPath] of imageUrlMap) {
+          body = body.replaceAll(originalUrl, localPath);
+        }
+      }
+
+      const sanitizedBody = sanitizeContent(body);
+      reviewOutput += `\n${sanitizedBody}`;
+    }
+
     if (
       review.comments &&
       review.comments.nodes &&
@@ -85,14 +97,15 @@ export function formatReviewComments(
     ) {
       const comments = review.comments.nodes
         .map((comment) => {
-          let body = stripHtmlComments(comment.body);
+          let body = comment.body;
 
-          // Replace image URLs with local paths if we have a mapping
           if (imageUrlMap) {
             for (const [originalUrl, localPath] of imageUrlMap) {
               body = body.replaceAll(originalUrl, localPath);
             }
           }
+
+          body = sanitizeContent(body);
 
           return `  [Comment on ${comment.path}:${comment.line || "?"}]: ${body}`;
         })

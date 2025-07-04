@@ -62,10 +62,13 @@ describe("checkWritePermissions", () => {
     inputs: {
       triggerPhrase: "@claude",
       assigneeTrigger: "",
-      allowedTools: "",
-      disallowedTools: "",
+      labelTrigger: "",
+      allowedTools: [],
+      disallowedTools: [],
       customInstructions: "",
       directPrompt: "",
+      branchPrefix: "claude/",
+      useStickyComment: false,
     },
   });
 

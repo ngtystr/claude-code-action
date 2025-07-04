@@ -6,6 +6,7 @@ import { describe, it, expect } from "bun:test";
 import {
   createMockContext,
   mockIssueAssignedContext,
+  mockIssueLabeledContext,
   mockIssueCommentContext,
   mockIssueOpenedContext,
   mockPullRequestReviewContext,
@@ -29,10 +30,13 @@ describe("checkContainsTrigger", () => {
         inputs: {
           triggerPhrase: "/claude",
           assigneeTrigger: "",
+          labelTrigger: "",
           directPrompt: "Fix the bug in the login form",
-          allowedTools: "",
-          disallowedTools: "",
+          allowedTools: [],
+          disallowedTools: [],
           customInstructions: "",
+          branchPrefix: "claude/",
+          useStickyComment: false,
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -55,10 +59,13 @@ describe("checkContainsTrigger", () => {
         inputs: {
           triggerPhrase: "/claude",
           assigneeTrigger: "",
+          labelTrigger: "",
           directPrompt: "",
-          allowedTools: "",
-          disallowedTools: "",
+          allowedTools: [],
+          disallowedTools: [],
           customInstructions: "",
+          branchPrefix: "claude/",
+          useStickyComment: false,
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);
@@ -87,6 +94,11 @@ describe("checkContainsTrigger", () => {
         ...mockIssueAssignedContext,
         payload: {
           ...mockIssueAssignedContext.payload,
+          assignee: {
+            ...(mockIssueAssignedContext.payload as IssuesAssignedEvent)
+              .assignee,
+            login: "otherUser",
+          },
           issue: {
             ...(mockIssueAssignedContext.payload as IssuesAssignedEvent).issue,
             assignee: {
@@ -98,6 +110,39 @@ describe("checkContainsTrigger", () => {
         },
       } as ParsedGitHubContext;
 
+      expect(checkContainsTrigger(context)).toBe(false);
+    });
+  });
+
+  describe("label trigger", () => {
+    it("should return true when issue is labeled with the trigger label", () => {
+      const context = mockIssueLabeledContext;
+      expect(checkContainsTrigger(context)).toBe(true);
+    });
+
+    it("should return false when issue is labeled with a different label", () => {
+      const context = {
+        ...mockIssueLabeledContext,
+        payload: {
+          ...mockIssueLabeledContext.payload,
+          label: {
+            ...(mockIssueLabeledContext.payload as any).label,
+            name: "bug",
+          },
+        },
+      } as ParsedGitHubContext;
+      expect(checkContainsTrigger(context)).toBe(false);
+    });
+
+    it("should return false for non-labeled events", () => {
+      const context = {
+        ...mockIssueLabeledContext,
+        eventAction: "opened",
+        payload: {
+          ...mockIssueLabeledContext.payload,
+          action: "opened",
+        },
+      } as ParsedGitHubContext;
       expect(checkContainsTrigger(context)).toBe(false);
     });
   });
@@ -227,10 +272,13 @@ describe("checkContainsTrigger", () => {
         inputs: {
           triggerPhrase: "@claude",
           assigneeTrigger: "",
+          labelTrigger: "",
           directPrompt: "",
-          allowedTools: "",
-          disallowedTools: "",
+          allowedTools: [],
+          disallowedTools: [],
           customInstructions: "",
+          branchPrefix: "claude/",
+          useStickyComment: false,
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -254,10 +302,13 @@ describe("checkContainsTrigger", () => {
         inputs: {
           triggerPhrase: "@claude",
           assigneeTrigger: "",
+          labelTrigger: "",
           directPrompt: "",
-          allowedTools: "",
-          disallowedTools: "",
+          allowedTools: [],
+          disallowedTools: [],
           customInstructions: "",
+          branchPrefix: "claude/",
+          useStickyComment: false,
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -281,10 +332,13 @@ describe("checkContainsTrigger", () => {
         inputs: {
           triggerPhrase: "@claude",
           assigneeTrigger: "",
+          labelTrigger: "",
           directPrompt: "",
-          allowedTools: "",
-          disallowedTools: "",
+          allowedTools: [],
+          disallowedTools: [],
           customInstructions: "",
+          branchPrefix: "claude/",
+          useStickyComment: false,
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);

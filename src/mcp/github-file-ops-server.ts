@@ -7,6 +7,8 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import fetch from "node-fetch";
 import { GITHUB_API_URL } from "../github/api/config";
+import { Octokit } from "@octokit/rest";
+import { updateClaudeComment } from "../github/operations/comments/update-claude-comment";
 
 type GitHubRef = {
   object: {
@@ -123,13 +125,58 @@ server.tool(
             ? filePath
             : join(REPO_DIR, filePath);
 
-          const content = await readFile(fullPath, "utf-8");
-          return {
-            path: filePath,
-            mode: "100644",
-            type: "blob",
-            content: content,
-          };
+          // Check if file is binary (images, etc.)
+          const isBinaryFile =
+            /\.(png|jpg|jpeg|gif|webp|ico|pdf|zip|tar|gz|exe|bin|woff|woff2|ttf|eot)$/i.test(
+              filePath,
+            );
+
+          if (isBinaryFile) {
+            // For binary files, create a blob first using the Blobs API
+            const binaryContent = await readFile(fullPath);
+
+            // Create blob using Blobs API (supports encoding parameter)
+            const blobUrl = `${GITHUB_API_URL}/repos/${owner}/${repo}/git/blobs`;
+            const blobResponse = await fetch(blobUrl, {
+              method: "POST",
+              headers: {
+                Accept: "application/vnd.github+json",
+                Authorization: `Bearer ${githubToken}`,
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                content: binaryContent.toString("base64"),
+                encoding: "base64",
+              }),
+            });
+
+            if (!blobResponse.ok) {
+              const errorText = await blobResponse.text();
+              throw new Error(
+                `Failed to create blob for ${filePath}: ${blobResponse.status} - ${errorText}`,
+              );
+            }
+
+            const blobData = (await blobResponse.json()) as { sha: string };
+
+            // Return tree entry with blob SHA
+            return {
+              path: filePath,
+              mode: "100644",
+              type: "blob",
+              sha: blobData.sha,
+            };
+          } else {
+            // For text files, include content directly in tree
+            const content = await readFile(fullPath, "utf-8");
+            return {
+              path: filePath,
+              mode: "100644",
+              type: "blob",
+              content: content,
+            };
+          }
         }),
       );
 
@@ -742,6 +789,70 @@ server.tool(
           {
             type: "text",
             text: JSON.stringify(simplifiedIssues, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${errorMessage}`,
+          },
+        ],
+        error: errorMessage,
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "update_claude_comment",
+  "Update the Claude comment with progress and results (automatically handles both issue and PR comments)",
+  {
+    body: z.string().describe("The updated comment content"),
+  },
+  async ({ body }) => {
+    try {
+      const githubToken = process.env.GITHUB_TOKEN;
+      const claudeCommentId = process.env.CLAUDE_COMMENT_ID;
+      const eventName = process.env.GITHUB_EVENT_NAME;
+
+      if (!githubToken) {
+        throw new Error("GITHUB_TOKEN environment variable is required");
+      }
+      if (!claudeCommentId) {
+        throw new Error("CLAUDE_COMMENT_ID environment variable is required");
+      }
+
+      const owner = REPO_OWNER;
+      const repo = REPO_NAME;
+      const commentId = parseInt(claudeCommentId, 10);
+
+      const octokit = new Octokit({
+        auth: githubToken,
+        baseUrl: GITHUB_API_URL,
+      });
+
+      const isPullRequestReviewComment =
+        eventName === "pull_request_review_comment";
+
+      const result = await updateClaudeComment(octokit, {
+        owner,
+        repo,
+        commentId,
+        body,
+        isPullRequestReviewComment,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
