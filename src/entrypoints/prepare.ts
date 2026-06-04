@@ -11,7 +11,7 @@ import { checkTriggerAction } from "../github/validation/trigger";
 import { checkHumanActor } from "../github/validation/actor";
 import { checkWritePermissions } from "../github/validation/permissions";
 import { createInitialComment } from "../github/operations/comments/create-initial";
-import { setupBranch } from "../github/operations/branch";
+import { setupBranch, type BranchInfo } from "../github/operations/branch";
 import { updateTrackingComment } from "../github/operations/comments/update-with-branch";
 import { prepareMcpConfig } from "../mcp/install-mcp-server";
 import { createPrompt } from "../create-prompt";
@@ -63,7 +63,26 @@ async function run() {
     });
 
     // Step 8: Setup branch
-    const branchInfo = await setupBranch(octokit, githubData, context);
+    // setup_branch=false の repo（トリアージ用ハブ等、このリポジトリにコミットしない用途）では
+    // 新規ブランチを作らず、base ブランチ上で読み取り専用に動かす。claudeBranch を undefined に
+    // することで、以降の分岐は「open PR」と同じ扱いになり、空ブランチを作らずに済む。
+    let branchInfo: BranchInfo;
+    if (process.env.SETUP_BRANCH === "false") {
+      const baseBranch =
+        context.inputs.baseBranch ||
+        (
+          await octokit.rest.repos.get({
+            owner: context.repository.owner,
+            repo: context.repository.repo,
+          })
+        ).data.default_branch;
+      branchInfo = { baseBranch, currentBranch: baseBranch };
+      console.log(
+        `SETUP_BRANCH=false: skipping branch creation, operating read-only on ${baseBranch}`,
+      );
+    } else {
+      branchInfo = await setupBranch(octokit, githubData, context);
+    }
 
     // Step 9: Determine the correct comment ID to use
     let finalCommentId = commentId;
