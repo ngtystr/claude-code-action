@@ -238,7 +238,9 @@ export function prepareContext(
       if (!baseBranch) {
         throw new Error("BASE_BRANCH is required for issues event");
       }
-      if (!claudeBranch) {
+      // setup_branch=false（読み取り専用: トリアージ用ハブ等）では作業ブランチを作らないため
+      // claudeBranch が無くても許容する。それ以外は従来通り必須。
+      if (!claudeBranch && process.env.SETUP_BRANCH !== "false") {
         throw new Error("CLAUDE_BRANCH is required for issues event");
       }
 
