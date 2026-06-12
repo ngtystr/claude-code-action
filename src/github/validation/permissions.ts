@@ -17,6 +17,13 @@ export async function checkWritePermissions(
   try {
     core.info(`Checking permissions for actor: ${actor}`);
 
+    // GitHub App は collaborator にならないので権限チェック対象外
+    // (bot の許可/拒否は checkHumanActor 側の allowlist で制御)
+    if (actor.endsWith("[bot]")) {
+      core.info(`Actor is a GitHub App: ${actor}`);
+      return true;
+    }
+
     // Check permissions directly using the permission endpoint
     const response = await octokit.repos.getCollaboratorPermissionLevel({
       owner: repository.owner,

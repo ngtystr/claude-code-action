@@ -21,7 +21,14 @@ export async function checkHumanActor(
 
   console.log(`Actor type: ${actorType}`);
 
+  const ALLOWED_BOTS = ["claude"]; // [bot] サフィックス抜きで指定
+
   if (actorType !== "User") {
+    const normalized = githubContext.actor.toLowerCase().replace(/\[bot\]$/, "");
+    if (ALLOWED_BOTS.includes(normalized)) {
+      console.log(`Actor ${githubContext.actor} is in allowed bots, skipping human actor check`);
+      return;
+    }
     throw new Error(
       `Workflow initiated by non-human actor: ${githubContext.actor} (type: ${actorType}).`,
     );
