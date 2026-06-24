@@ -21,7 +21,7 @@ export async function checkHumanActor(
 
   console.log(`Actor type: ${actorType}`);
 
-  const ALLOWED_BOTS = ["claude"]; // [bot] サフィックス抜きで指定
+  const ALLOWED_BOTS = ["claude", "github-actions"]; // [bot] サフィックス抜きで指定
 
   if (actorType !== "User") {
     const normalized = githubContext.actor.toLowerCase().replace(/\[bot\]$/, "");
