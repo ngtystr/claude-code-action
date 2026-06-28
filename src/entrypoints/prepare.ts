@@ -89,9 +89,10 @@ async function run() {
         `SETUP_BRANCH=false: skipping branch creation, operating read-only on ${baseBranch}`,
       );
     } else if (isDispatch) {
-      // workflow_dispatch では setupBranch（issue/PR 前提）を使わず、独自に新規ブランチを作る。
-      // 命名は ${branchPrefix}workflow-${runId} で衝突を回避し、複数 dispatch が並走しても
-      // 各々独立した作業ブランチを持つ。base は inputs.baseBranch、無ければ default branch。
+      // workflow_dispatch では setupBranch（issue/PR 前提）を使わず、独自にブランチを決める。
+      //   - task_key が空: 従来挙動。${branchPrefix}workflow-${runId} で毎回新規ブランチ
+      //   - task_key あり: ${branchPrefix}task-${sanitize(task_key)} で固定。同じキーの open PR が
+      //                    あればそのブランチを継続。done_marker が PR body にあれば no-op で終了
       const baseBranch =
         context.inputs.baseBranch ||
         (
@@ -100,25 +101,97 @@ async function run() {
             repo: context.repository.repo,
           })
         ).data.default_branch;
-      const newBranch = `${context.inputs.branchPrefix}workflow-${context.runId}`;
-      console.log(
-        `workflow_dispatch: creating new branch ${newBranch} from ${baseBranch}`,
-      );
-      const baseRef = await octokit.rest.git.getRef({
-        owner: context.repository.owner,
-        repo: context.repository.repo,
-        ref: `heads/${baseBranch}`,
-      });
-      await octokit.rest.git.createRef({
-        owner: context.repository.owner,
-        repo: context.repository.repo,
-        ref: `refs/heads/${newBranch}`,
-        sha: baseRef.data.object.sha,
-      });
+
+      const taskKey = context.inputs.taskKey;
+      let newBranch: string;
+      if (taskKey) {
+        // task_key を git ref 用に sanitize。/ や . を - に置換、英数・- 以外を - に、
+        // 連続 - を圧縮、前後の - を除去、英小文字化。
+        const safeKey = taskKey
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "");
+        newBranch = `${context.inputs.branchPrefix}task-${safeKey || "x"}`;
+      } else {
+        newBranch = `${context.inputs.branchPrefix}workflow-${context.runId}`;
+      }
+
+      // タスク継続モード: 同じ head ブランチを指す open PR を探す
+      let existingPrNumber: number | undefined;
+      if (taskKey) {
+        const { data: openPrs } = await octokit.rest.pulls.list({
+          owner: context.repository.owner,
+          repo: context.repository.repo,
+          state: "open",
+          head: `${context.repository.owner}:${newBranch}`,
+          per_page: 1,
+        });
+        const openPr = openPrs[0];
+        if (openPr) {
+          // 完了マーカーがある PR は、これ以上 dispatch されても何もしない
+          if (
+            (openPr.body ?? "").includes(context.inputs.doneMarker)
+          ) {
+            core.notice(
+              `Task '${taskKey}' is marked done in PR #${openPr.number}. Skipping this dispatch.`,
+            );
+            // contains_trigger を出力しないことで Run Claude Code step は自然に skip される。
+            // 明示的に false を出して、後段の if 評価でも確実に止まるようにしておく。
+            core.setOutput("contains_trigger", "false");
+            return;
+          }
+          existingPrNumber = openPr.number;
+        }
+      }
+
+      // ブランチが既にリモートに存在するか確認（同じ task_key の再 dispatch、
+      // または前回 PR を作る前に死んだ名残）。あれば fetch & checkout、無ければ base から作成。
+      let branchExists = false;
+      try {
+        await octokit.rest.git.getRef({
+          owner: context.repository.owner,
+          repo: context.repository.repo,
+          ref: `heads/${newBranch}`,
+        });
+        branchExists = true;
+      } catch (e: any) {
+        if (e?.status !== 404) throw e;
+      }
+
+      if (branchExists) {
+        console.log(
+          `workflow_dispatch: reusing existing branch ${newBranch}` +
+            (existingPrNumber ? ` (continuing PR #${existingPrNumber})` : ""),
+        );
+      } else {
+        console.log(
+          `workflow_dispatch: creating new branch ${newBranch} from ${baseBranch}`,
+        );
+        const baseRef = await octokit.rest.git.getRef({
+          owner: context.repository.owner,
+          repo: context.repository.repo,
+          ref: `heads/${baseBranch}`,
+        });
+        await octokit.rest.git.createRef({
+          owner: context.repository.owner,
+          repo: context.repository.repo,
+          ref: `refs/heads/${newBranch}`,
+          sha: baseRef.data.object.sha,
+        });
+      }
+
       await $`git fetch origin --depth=1 ${newBranch}`;
       await $`git checkout ${newBranch}`;
       core.setOutput("CLAUDE_BRANCH", newBranch);
       core.setOutput("BASE_BRANCH", baseBranch);
+      // 既存 PR 番号は後段で createPrompt に渡す。env 経由が最小変更なので exportVariable。
+      if (existingPrNumber !== undefined) {
+        core.exportVariable(
+          "WORKFLOW_DISPATCH_EXISTING_PR",
+          String(existingPrNumber),
+        );
+      }
       branchInfo = {
         baseBranch,
         claudeBranch: newBranch,

@@ -37,6 +37,8 @@ describe("checkContainsTrigger", () => {
           customInstructions: "",
           branchPrefix: "claude/",
           useStickyComment: false,
+          taskKey: "",
+          doneMarker: "<!-- opportunistic-task-done -->",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -66,6 +68,8 @@ describe("checkContainsTrigger", () => {
           customInstructions: "",
           branchPrefix: "claude/",
           useStickyComment: false,
+          taskKey: "",
+          doneMarker: "<!-- opportunistic-task-done -->",
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);
@@ -279,6 +283,8 @@ describe("checkContainsTrigger", () => {
           customInstructions: "",
           branchPrefix: "claude/",
           useStickyComment: false,
+          taskKey: "",
+          doneMarker: "<!-- opportunistic-task-done -->",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -309,6 +315,8 @@ describe("checkContainsTrigger", () => {
           customInstructions: "",
           branchPrefix: "claude/",
           useStickyComment: false,
+          taskKey: "",
+          doneMarker: "<!-- opportunistic-task-done -->",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -339,6 +347,8 @@ describe("checkContainsTrigger", () => {
           customInstructions: "",
           branchPrefix: "claude/",
           useStickyComment: false,
+          taskKey: "",
+          doneMarker: "<!-- opportunistic-task-done -->",
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);

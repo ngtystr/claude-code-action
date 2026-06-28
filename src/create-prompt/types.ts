@@ -90,6 +90,8 @@ type PullRequestEvent = {
 // workflow_dispatch から直接起動された軽量モード。
 // issue/PR コンテキストを持たず、`direct_prompt` を主体に動く。
 // dispatchInputs は workflow_dispatch.inputs の生値（CLI でいう -f key=value 群）。
+// taskKey/existingPrNumber/doneMarker はタスク継続モード（同一 task_key の open PR を
+// 流用して進める運用）で使う。詳細は prepare.ts の継続ロジックを参照。
 type WorkflowDispatchEvent = {
   eventName: "workflow_dispatch";
   isPR: false;
@@ -97,6 +99,9 @@ type WorkflowDispatchEvent = {
   claudeBranch: string;
   runId: string;
   dispatchInputs: Record<string, string>;
+  taskKey?: string;
+  existingPrNumber?: number;
+  doneMarker: string;
 };
 
 // Union type for all possible event types

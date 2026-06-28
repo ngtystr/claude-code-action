@@ -40,6 +40,8 @@ export type ParsedGitHubContext = {
     baseBranch?: string;
     branchPrefix: string;
     useStickyComment: boolean;
+    taskKey: string;
+    doneMarker: string;
   };
 };
 
@@ -67,6 +69,9 @@ export function parseGitHubContext(): ParsedGitHubContext {
       baseBranch: process.env.BASE_BRANCH,
       branchPrefix: process.env.BRANCH_PREFIX ?? "claude/",
       useStickyComment: process.env.USE_STICKY_COMMENT === "true",
+      // workflow_dispatch のタスク継続モード用。それ以外の event では参照されない。
+      taskKey: process.env.TASK_KEY ?? "",
+      doneMarker: process.env.DONE_MARKER ?? "<!-- opportunistic-task-done -->",
     },
   };
 

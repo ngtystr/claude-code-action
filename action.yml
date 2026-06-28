@@ -27,6 +27,14 @@ inputs:
     description: "Whether to create/checkout a working branch. Set to 'false' for read-only workflows (e.g. triage hubs) that never commit, to avoid leaving empty branches behind."
     required: false
     default: "true"
+  task_key:
+    description: "(workflow_dispatch only) Identifier for the task. When set, the action looks for an existing open PR whose head branch matches `${branch_prefix}task-${sanitize(task_key)}`; if found, it continues on that branch instead of creating a new one. Leave empty for one-shot dispatches."
+    required: false
+    default: ""
+  done_marker:
+    description: "(workflow_dispatch only) Marker string that, when present in the existing PR body, makes the action exit early without invoking Claude. Used together with task_key so Claude can opt the task out of further dispatches by appending this string to the PR description."
+    required: false
+    default: "<!-- opportunistic-task-done -->"
 
   # Claude Code configuration
   model:
@@ -140,6 +148,8 @@ runs:
         BASE_BRANCH: ${{ inputs.base_branch }}
         BRANCH_PREFIX: ${{ inputs.branch_prefix }}
         SETUP_BRANCH: ${{ inputs.setup_branch }}
+        TASK_KEY: ${{ inputs.task_key }}
+        DONE_MARKER: ${{ inputs.done_marker }}
         ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
         DISALLOWED_TOOLS: ${{ inputs.disallowed_tools }}
         CUSTOM_INSTRUCTIONS: ${{ inputs.custom_instructions }}

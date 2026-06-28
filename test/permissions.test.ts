@@ -69,6 +69,8 @@ describe("checkWritePermissions", () => {
       directPrompt: "",
       branchPrefix: "claude/",
       useStickyComment: false,
+      taskKey: "",
+      doneMarker: "<!-- opportunistic-task-done -->",
     },
   });
 

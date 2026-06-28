@@ -21,6 +21,8 @@ const defaultInputs = {
   timeoutMinutes: 30,
   branchPrefix: "claude/",
   useStickyComment: false,
+  taskKey: "",
+  doneMarker: "<!-- opportunistic-task-done -->",
 };
 
 const defaultRepository = {

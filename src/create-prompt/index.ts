@@ -306,6 +306,7 @@ export function prepareContext(
 
     // workflow_dispatch から起動された軽量モード。issue/PR コンテキストを持たないので
     // direct_prompt を必須にし、現在のブランチ・base branch・dispatch inputs だけ流す。
+    // タスク継続モードのときは taskKey / existingPrNumber / doneMarker を追加で詰める。
     case "workflow_dispatch":
       if (!directPrompt) {
         throw new Error(
@@ -324,6 +325,12 @@ export function prepareContext(
         // 念のため（parseGitHubContext が "workflow_dispatch" なら必ず WorkflowDispatchEvent payload）
         throw new Error("Expected WorkflowDispatchEvent payload");
       }
+      // prepare.ts が継続 PR を見つけたとき、env WORKFLOW_DISPATCH_EXISTING_PR に PR 番号を入れている。
+      const existingPrEnv = process.env.WORKFLOW_DISPATCH_EXISTING_PR;
+      const existingPrNumber =
+        existingPrEnv && /^\d+$/.test(existingPrEnv)
+          ? parseInt(existingPrEnv, 10)
+          : undefined;
       eventData = {
         eventName: "workflow_dispatch",
         isPR: false,
@@ -338,6 +345,9 @@ export function prepareContext(
             String(v ?? ""),
           ]),
         ),
+        ...(context.inputs.taskKey && { taskKey: context.inputs.taskKey }),
+        ...(existingPrNumber !== undefined && { existingPrNumber }),
+        doneMarker: context.inputs.doneMarker,
       };
       break;
 
@@ -418,6 +428,12 @@ export function getEventTypeAndContext(envVars: PreparedContext): {
 // issue/PR コンテキストを持たないので、direct_prompt をそのまま「実行すべき指示」として
 // 流し、現在のブランチ・base branch・dispatch inputs だけメタ情報として添える。
 // commit / PR の作成は受け手側の workflow が確保した GITHUB_TOKEN とブランチで claude が行う想定。
+//
+// task_key が指定されている「タスク継続モード」のときは:
+//   - existingPrNumber あり: 既存 PR の continuation。新規 PR を作らず、commit を積むだけ
+//   - existingPrNumber なし: 初回。最初の commit と一緒に新規 PR を作る
+//   - いずれも、タスク全体が完了したら PR description に doneMarker を追記して
+//     次回以降の dispatch が no-op になるようにする
 export function generateWorkflowDispatchPrompt(
   context: PreparedContext,
   eventData: Extract<EventData, { eventName: "workflow_dispatch" }>,
@@ -433,12 +449,55 @@ export function generateWorkflowDispatchPrompt(
     .map(([k, v]) => `  ${k}: ${sanitizeContent(v)}`)
     .join("\n");
 
+  // タスク継続モード（task_key 指定あり）か、ワンショットモードかで PR まわりの指示を切り替える。
+  const isContinuationMode = Boolean(eventData.taskKey);
+  const hasExistingPr =
+    isContinuationMode && eventData.existingPrNumber !== undefined;
+
+  let prSection: string;
+  if (!isContinuationMode) {
+    // 旧来のワンショット dispatch。1 run = 1 PR の想定。
+    prSection = `- When you are done with the work for this run, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\` (or surface a "Create a PR" link in your run summary if PR creation is not available).`;
+  } else if (hasExistingPr) {
+    // 継続モード: 既存 PR がある → 同じブランチに commit を追加するだけ
+    prSection = `- This run is a CONTINUATION of an existing pull request: #${eventData.existingPrNumber}. The branch \`${eventData.claudeBranch}\` is already its head.
+- DO NOT open a new pull request. Simply commit to \`${eventData.claudeBranch}\` and the existing PR will pick up the changes.
+- If the existing PR description is missing information that future runs will need (next steps, context), feel free to update it via the GitHub API or by leaving notes in the progress file (the direct_prompt below should mention which file).`;
+  } else {
+    // 継続モード: PR が無い（= 初回 or 前回 close 済み）→ 新規 PR を作る
+    prSection = `- This run is the FIRST step of a continuing task identified by \`task_key=${eventData.taskKey}\`. There is no existing pull request yet.
+- After your first commits, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\`. Subsequent dispatches with the same task_key will reuse this branch and add commits to that same PR.`;
+  }
+
+  const doneMarkerSection = isContinuationMode
+    ? `
+
+Task completion handling (continuation mode):
+- When you judge that the WHOLE task (not just today's step) is complete — typically when every item in the progress file's Definition of Done is checked — append the following marker on its own line to the END of the pull request description, then commit any final cleanup:
+
+  \`${eventData.doneMarker}\`
+
+- Once this marker is present in the PR description, future workflow_dispatch runs for this task_key will be a no-op (skipped before Claude is even invoked). Do NOT add this marker prematurely.
+- If you want to STOP a task that turned out to be misguided or no longer needed, you can also add the marker yourself with a short note explaining why; the next dispatch will then skip it.`
+    : "";
+
   let promptContent = `You are Claude, invoked via GitHub Actions \`workflow_dispatch\`. There is no issue or pull request attached to this run — your instructions come entirely from the <direct_prompt> tag below.
 
 <repository>${context.repository}</repository>
 <run_id>${eventData.runId}</run_id>
 <base_branch>${eventData.baseBranch}</base_branch>
-<working_branch>${eventData.claudeBranch}</working_branch>
+<working_branch>${eventData.claudeBranch}</working_branch>${
+    isContinuationMode
+      ? `
+<task_key>${sanitizeContent(eventData.taskKey ?? "")}</task_key>${
+          hasExistingPr
+            ? `
+<existing_pr_number>${eventData.existingPrNumber}</existing_pr_number>`
+            : ""
+        }
+<done_marker>${eventData.doneMarker}</done_marker>`
+      : ""
+  }
 <dispatch_inputs>
 ${inputsBlock || "  (none)"}
 </dispatch_inputs>
@@ -450,11 +509,11 @@ ${sanitizeContent(directPrompt)}
 Operating rules:
 - You are already checked out on the working branch \`${eventData.claudeBranch}\` (created from \`${eventData.baseBranch}\`). Do not create another branch.
 - Make commits with \`mcp__github_file_ops__commit_files\` (single atomic commits, multi-file OK). Edit files locally first, then commit — the tool reads the files from disk.
-- When you are done, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\` (or surface a "Create a PR" link in your run summary if PR creation is not available to you).
+${prSection}
 - Console output and tool results are NOT shown to the requester. Anything you want them to see must end up in the PR description, commit message, or job summary.
 - No GitHub comment exists for this run, so do NOT call \`mcp__github_file_ops__update_claude_comment\`.
 - Follow the repository's CLAUDE.md (root and nested) for any repo-specific conventions before editing.
-- If the direct_prompt cannot be completed safely (missing context, conflicting requirements, requires risky actions), stop and explain in the job summary / final commit message instead of guessing.
+- If the direct_prompt cannot be completed safely (missing context, conflicting requirements, requires risky actions), stop and explain in the job summary / final commit message instead of guessing.${doneMarkerSection}
 `;
 
   if (context.customInstructions) {
