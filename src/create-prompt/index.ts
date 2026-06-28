@@ -16,6 +16,7 @@ import {
   isIssueCommentEvent,
   isPullRequestReviewEvent,
   isPullRequestReviewCommentEvent,
+  isWorkflowDispatchEvent,
 } from "../github/context";
 import type { ParsedGitHubContext } from "../github/context";
 import type { CommonFields, PreparedContext, EventData } from "./types";
@@ -303,6 +304,43 @@ export function prepareContext(
       };
       break;
 
+    // workflow_dispatch から起動された軽量モード。issue/PR コンテキストを持たないので
+    // direct_prompt を必須にし、現在のブランチ・base branch・dispatch inputs だけ流す。
+    case "workflow_dispatch":
+      if (!directPrompt) {
+        throw new Error(
+          "DIRECT_PROMPT is required for workflow_dispatch event",
+        );
+      }
+      if (!baseBranch) {
+        throw new Error("BASE_BRANCH is required for workflow_dispatch event");
+      }
+      if (!claudeBranch) {
+        throw new Error(
+          "CLAUDE_BRANCH is required for workflow_dispatch event",
+        );
+      }
+      if (!isWorkflowDispatchEvent(context)) {
+        // 念のため（parseGitHubContext が "workflow_dispatch" なら必ず WorkflowDispatchEvent payload）
+        throw new Error("Expected WorkflowDispatchEvent payload");
+      }
+      eventData = {
+        eventName: "workflow_dispatch",
+        isPR: false,
+        baseBranch,
+        claudeBranch,
+        runId: context.runId,
+        // payload.inputs の値はすべて string（GitHub Actions の workflow_dispatch 仕様）。
+        // 念のため key/value を文字列化して shallow copy する。
+        dispatchInputs: Object.fromEntries(
+          Object.entries(context.payload.inputs ?? {}).map(([k, v]) => [
+            k,
+            String(v ?? ""),
+          ]),
+        ),
+      };
+      break;
+
     default:
       throw new Error(`Unsupported event type: ${eventName}`);
   }
@@ -365,15 +403,85 @@ export function getEventTypeAndContext(envVars: PreparedContext): {
           : `pull request event`,
       };
 
+    case "workflow_dispatch":
+      return {
+        eventType: "WORKFLOW_DISPATCH",
+        triggerContext: `workflow_dispatch (run ${eventData.runId})`,
+      };
+
     default:
       throw new Error(`Unexpected event type`);
   }
 }
 
+// workflow_dispatch 用の軽量プロンプトジェネレータ。
+// issue/PR コンテキストを持たないので、direct_prompt をそのまま「実行すべき指示」として
+// 流し、現在のブランチ・base branch・dispatch inputs だけメタ情報として添える。
+// commit / PR の作成は受け手側の workflow が確保した GITHUB_TOKEN とブランチで claude が行う想定。
+export function generateWorkflowDispatchPrompt(
+  context: PreparedContext,
+  eventData: Extract<EventData, { eventName: "workflow_dispatch" }>,
+): string {
+  const directPrompt = context.directPrompt;
+  if (!directPrompt) {
+    throw new Error(
+      "direct_prompt is required for workflow_dispatch event",
+    );
+  }
+
+  const inputsBlock = Object.entries(eventData.dispatchInputs)
+    .map(([k, v]) => `  ${k}: ${sanitizeContent(v)}`)
+    .join("\n");
+
+  let promptContent = `You are Claude, invoked via GitHub Actions \`workflow_dispatch\`. There is no issue or pull request attached to this run — your instructions come entirely from the <direct_prompt> tag below.
+
+<repository>${context.repository}</repository>
+<run_id>${eventData.runId}</run_id>
+<base_branch>${eventData.baseBranch}</base_branch>
+<working_branch>${eventData.claudeBranch}</working_branch>
+<dispatch_inputs>
+${inputsBlock || "  (none)"}
+</dispatch_inputs>
+
+<direct_prompt>
+${sanitizeContent(directPrompt)}
+</direct_prompt>
+
+Operating rules:
+- You are already checked out on the working branch \`${eventData.claudeBranch}\` (created from \`${eventData.baseBranch}\`). Do not create another branch.
+- Make commits with \`mcp__github_file_ops__commit_files\` (single atomic commits, multi-file OK). Edit files locally first, then commit — the tool reads the files from disk.
+- When you are done, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\` (or surface a "Create a PR" link in your run summary if PR creation is not available to you).
+- Console output and tool results are NOT shown to the requester. Anything you want them to see must end up in the PR description, commit message, or job summary.
+- No GitHub comment exists for this run, so do NOT call \`mcp__github_file_ops__update_claude_comment\`.
+- Follow the repository's CLAUDE.md (root and nested) for any repo-specific conventions before editing.
+- If the direct_prompt cannot be completed safely (missing context, conflicting requirements, requires risky actions), stop and explain in the job summary / final commit message instead of guessing.
+`;
+
+  if (context.customInstructions) {
+    promptContent += `\nCUSTOM INSTRUCTIONS:\n${context.customInstructions}\n`;
+  }
+
+  return promptContent;
+}
+
 export function generatePrompt(
   context: PreparedContext,
-  githubData: FetchDataResult,
+  githubData: FetchDataResult | null,
 ): string {
+  const { eventData } = context;
+
+  // workflow_dispatch: issue/PR コンテキストが無いので、direct_prompt を主体にした
+  // 軽量プロンプトに振り分ける。fetchGitHubData は呼ばれていない（githubData=null）。
+  if (eventData.eventName === "workflow_dispatch") {
+    return generateWorkflowDispatchPrompt(context, eventData);
+  }
+
+  // 以降の経路は issue/PR を前提とするため、githubData は必須。
+  if (!githubData) {
+    throw new Error(
+      `githubData is required for event ${eventData.eventName}`,
+    );
+  }
   const {
     contextData,
     comments,
@@ -381,7 +489,6 @@ export function generatePrompt(
     reviewData,
     imageUrlMap,
   } = githubData;
-  const { eventData } = context;
 
   const { eventType, triggerContext } = getEventTypeAndContext(context);
 
@@ -637,7 +744,7 @@ export async function createPrompt(
   claudeCommentId: number,
   baseBranch: string | undefined,
   claudeBranch: string | undefined,
-  githubData: FetchDataResult,
+  githubData: FetchDataResult | null,
   context: ParsedGitHubContext,
 ) {
   try {

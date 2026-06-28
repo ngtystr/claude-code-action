@@ -6,6 +6,7 @@
  */
 
 import * as core from "@actions/core";
+import { $ } from "bun";
 import { setupGitHubToken } from "../github/token";
 import { checkTriggerAction } from "../github/validation/trigger";
 import { checkHumanActor } from "../github/validation/actor";
@@ -16,7 +17,7 @@ import { updateTrackingComment } from "../github/operations/comments/update-with
 import { prepareMcpConfig } from "../mcp/install-mcp-server";
 import { createPrompt } from "../create-prompt";
 import { createOctokit } from "../github/api/client";
-import { fetchGitHubData } from "../github/data/fetcher";
+import { fetchGitHubData, type FetchDataResult } from "../github/data/fetcher";
 import { parseGitHubContext } from "../github/context";
 
 async function run() {
@@ -27,6 +28,9 @@ async function run() {
 
     // Step 2: Parse GitHub context (once for all operations)
     const context = parseGitHubContext();
+    // workflow_dispatch: issue/PR 不在の軽量経路。初期コメント / fetchGitHubData / PR 検出 /
+    // updateTrackingComment はすべてスキップし、独自に作業ブランチを作って direct_prompt を流す。
+    const isDispatch = context.eventName === "workflow_dispatch";
 
     // Step 3: Check write permissions
     const hasWritePermissions = await checkWritePermissions(
@@ -50,17 +54,21 @@ async function run() {
     // Step 5: Check if actor is human
     await checkHumanActor(octokit.rest, context);
 
-    // Step 6: Create initial tracking comment
-    const commentId = await createInitialComment(octokit.rest, context);
+    // Step 6: Create initial tracking comment（workflow_dispatch は付帯コメントを持たないので skip）
+    const commentId = isDispatch
+      ? 0
+      : await createInitialComment(octokit.rest, context);
 
-    // Step 7: Fetch GitHub data (once for both branch setup and prompt creation)
-    const githubData = await fetchGitHubData({
-      octokits: octokit,
-      repository: `${context.repository.owner}/${context.repository.repo}`,
-      prNumber: context.entityNumber.toString(),
-      isPR: context.isPR,
-      triggerUsername: context.actor,
-    });
+    // Step 7: Fetch GitHub data（workflow_dispatch では entity が無いので skip → githubData=null）
+    const githubData: FetchDataResult | null = isDispatch
+      ? null
+      : await fetchGitHubData({
+          octokits: octokit,
+          repository: `${context.repository.owner}/${context.repository.repo}`,
+          prNumber: context.entityNumber.toString(),
+          isPR: context.isPR,
+          triggerUsername: context.actor,
+        });
 
     // Step 8: Setup branch
     // setup_branch=false の repo（トリアージ用ハブ等、このリポジトリにコミットしない用途）では
@@ -80,8 +88,44 @@ async function run() {
       console.log(
         `SETUP_BRANCH=false: skipping branch creation, operating read-only on ${baseBranch}`,
       );
+    } else if (isDispatch) {
+      // workflow_dispatch では setupBranch（issue/PR 前提）を使わず、独自に新規ブランチを作る。
+      // 命名は ${branchPrefix}workflow-${runId} で衝突を回避し、複数 dispatch が並走しても
+      // 各々独立した作業ブランチを持つ。base は inputs.baseBranch、無ければ default branch。
+      const baseBranch =
+        context.inputs.baseBranch ||
+        (
+          await octokit.rest.repos.get({
+            owner: context.repository.owner,
+            repo: context.repository.repo,
+          })
+        ).data.default_branch;
+      const newBranch = `${context.inputs.branchPrefix}workflow-${context.runId}`;
+      console.log(
+        `workflow_dispatch: creating new branch ${newBranch} from ${baseBranch}`,
+      );
+      const baseRef = await octokit.rest.git.getRef({
+        owner: context.repository.owner,
+        repo: context.repository.repo,
+        ref: `heads/${baseBranch}`,
+      });
+      await octokit.rest.git.createRef({
+        owner: context.repository.owner,
+        repo: context.repository.repo,
+        ref: `refs/heads/${newBranch}`,
+        sha: baseRef.data.object.sha,
+      });
+      await $`git fetch origin --depth=1 ${newBranch}`;
+      await $`git checkout ${newBranch}`;
+      core.setOutput("CLAUDE_BRANCH", newBranch);
+      core.setOutput("BASE_BRANCH", baseBranch);
+      branchInfo = {
+        baseBranch,
+        claudeBranch: newBranch,
+        currentBranch: newBranch,
+      };
     } else {
-      branchInfo = await setupBranch(octokit, githubData, context);
+      branchInfo = await setupBranch(octokit, githubData!, context);
     }
 
     // Step 9: Determine the correct comment ID to use

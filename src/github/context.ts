@@ -6,6 +6,7 @@ import type {
   PullRequestEvent,
   PullRequestReviewEvent,
   PullRequestReviewCommentEvent,
+  WorkflowDispatchEvent,
 } from "@octokit/webhooks-types";
 
 export type ParsedGitHubContext = {
@@ -23,7 +24,9 @@ export type ParsedGitHubContext = {
     | IssueCommentEvent
     | PullRequestEvent
     | PullRequestReviewEvent
-    | PullRequestReviewCommentEvent;
+    | PullRequestReviewCommentEvent
+    | WorkflowDispatchEvent;
+  // workflow_dispatch では issue/PR が無いので 0。それ以外は対応する番号。
   entityNumber: number;
   isPR: boolean;
   inputs: {
@@ -112,6 +115,18 @@ export function parseGitHubContext(): ParsedGitHubContext {
         isPR: true,
       };
     }
+    // workflow_dispatch: 直接 dispatch から起動された軽量モード。
+    // 結びつく issue/PR が無いので entityNumber=0, isPR=false で返し、
+    // 後段（prepare.ts）が「コメント作成 / fetchGitHubData / PR 検出」をスキップして
+    // direct_prompt 主体で動く独自経路に分岐する。
+    case "workflow_dispatch": {
+      return {
+        ...commonFields,
+        payload: context.payload as WorkflowDispatchEvent,
+        entityNumber: 0,
+        isPR: false,
+      };
+    }
     default:
       throw new Error(`Unsupported event type: ${context.eventName}`);
   }
@@ -159,4 +174,10 @@ export function isIssuesAssignedEvent(
   context: ParsedGitHubContext,
 ): context is ParsedGitHubContext & { payload: IssuesAssignedEvent } {
   return isIssuesEvent(context) && context.eventAction === "assigned";
+}
+
+export function isWorkflowDispatchEvent(
+  context: ParsedGitHubContext,
+): context is ParsedGitHubContext & { payload: WorkflowDispatchEvent } {
+  return context.eventName === "workflow_dispatch";
 }

@@ -87,6 +87,18 @@ type PullRequestEvent = {
   baseBranch?: string;
 };
 
+// workflow_dispatch から直接起動された軽量モード。
+// issue/PR コンテキストを持たず、`direct_prompt` を主体に動く。
+// dispatchInputs は workflow_dispatch.inputs の生値（CLI でいう -f key=value 群）。
+type WorkflowDispatchEvent = {
+  eventName: "workflow_dispatch";
+  isPR: false;
+  baseBranch: string;
+  claudeBranch: string;
+  runId: string;
+  dispatchInputs: Record<string, string>;
+};
+
 // Union type for all possible event types
 export type EventData =
   | PullRequestReviewCommentEvent
@@ -96,7 +108,8 @@ export type EventData =
   | IssueOpenedEvent
   | IssueAssignedEvent
   | IssueLabeledEvent
-  | PullRequestEvent;
+  | PullRequestEvent
+  | WorkflowDispatchEvent;
 
 // Combined type with separate eventData field
 export type PreparedContext = CommonFields & {
