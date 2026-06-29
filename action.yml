@@ -35,6 +35,10 @@ inputs:
     description: "(workflow_dispatch only) Marker string that, when present in the existing PR body, makes the action exit early without invoking Claude. Used together with task_key so Claude can opt the task out of further dispatches by appending this string to the PR description."
     required: false
     default: "<!-- opportunistic-task-done -->"
+  working_branch:
+    description: "(workflow_dispatch only) Use this branch name verbatim instead of deriving it from task_key/run_id. Takes precedence over task_key when set. If a remote branch with the same name exists, it is fetched & checked out; otherwise it is created from base_branch. Use this when an upstream step (e.g. an Issue-driven workflow) has already chosen the branch."
+    required: false
+    default: ""
 
   # Claude Code configuration
   model:
@@ -150,6 +154,7 @@ runs:
         SETUP_BRANCH: ${{ inputs.setup_branch }}
         TASK_KEY: ${{ inputs.task_key }}
         DONE_MARKER: ${{ inputs.done_marker }}
+        WORKING_BRANCH: ${{ inputs.working_branch }}
         ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
         DISALLOWED_TOOLS: ${{ inputs.disallowed_tools }}
         CUSTOM_INSTRUCTIONS: ${{ inputs.custom_instructions }}

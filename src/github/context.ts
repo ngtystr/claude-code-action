@@ -42,6 +42,7 @@ export type ParsedGitHubContext = {
     useStickyComment: boolean;
     taskKey: string;
     doneMarker: string;
+    workingBranch: string;
   };
 };
 
@@ -72,6 +73,9 @@ export function parseGitHubContext(): ParsedGitHubContext {
       // workflow_dispatch のタスク継続モード用。それ以外の event では参照されない。
       taskKey: process.env.TASK_KEY ?? "",
       doneMarker: process.env.DONE_MARKER ?? "<!-- opportunistic-task-done -->",
+      // workflow_dispatch でブランチ名を直接指定したい場合（Issue 連動など）。
+      // 空文字なら従来の taskKey / runId ベースの命名にフォールバック。
+      workingBranch: process.env.WORKING_BRANCH ?? "",
     },
   };
 

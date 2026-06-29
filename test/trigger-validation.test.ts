@@ -39,6 +39,7 @@ describe("checkContainsTrigger", () => {
           useStickyComment: false,
           taskKey: "",
           doneMarker: "<!-- opportunistic-task-done -->",
+          workingBranch: "",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -70,6 +71,7 @@ describe("checkContainsTrigger", () => {
           useStickyComment: false,
           taskKey: "",
           doneMarker: "<!-- opportunistic-task-done -->",
+          workingBranch: "",
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);
@@ -285,6 +287,7 @@ describe("checkContainsTrigger", () => {
           useStickyComment: false,
           taskKey: "",
           doneMarker: "<!-- opportunistic-task-done -->",
+          workingBranch: "",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -317,6 +320,7 @@ describe("checkContainsTrigger", () => {
           useStickyComment: false,
           taskKey: "",
           doneMarker: "<!-- opportunistic-task-done -->",
+          workingBranch: "",
         },
       });
       expect(checkContainsTrigger(context)).toBe(true);
@@ -349,6 +353,7 @@ describe("checkContainsTrigger", () => {
           useStickyComment: false,
           taskKey: "",
           doneMarker: "<!-- opportunistic-task-done -->",
+          workingBranch: "",
         },
       });
       expect(checkContainsTrigger(context)).toBe(false);

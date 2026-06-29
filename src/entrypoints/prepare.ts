@@ -103,8 +103,13 @@ async function run() {
         ).data.default_branch;
 
       const taskKey = context.inputs.taskKey;
+      const workingBranch = context.inputs.workingBranch;
       let newBranch: string;
-      if (taskKey) {
+      if (workingBranch) {
+        // Issue 連動などの上位ステップが既にブランチ名を決めているケース。
+        // sanitize せずそのまま使う（呼び出し側で git ref として valid な名前を渡す前提）。
+        newBranch = workingBranch;
+      } else if (taskKey) {
         // task_key を git ref 用に sanitize。/ や . を - に置換、英数・- 以外を - に、
         // 連続 - を圧縮、前後の - を除去、英小文字化。
         const safeKey = taskKey
@@ -117,9 +122,9 @@ async function run() {
         newBranch = `${context.inputs.branchPrefix}workflow-${context.runId}`;
       }
 
-      // タスク継続モード: 同じ head ブランチを指す open PR を探す
+      // 継続モード: 同じ head ブランチを指す open PR を探す（workingBranch / taskKey どちらでも）
       let existingPrNumber: number | undefined;
-      if (taskKey) {
+      if (workingBranch || taskKey) {
         const { data: openPrs } = await octokit.rest.pulls.list({
           owner: context.repository.owner,
           repo: context.repository.repo,
@@ -129,15 +134,16 @@ async function run() {
         });
         const openPr = openPrs[0];
         if (openPr) {
-          // 完了マーカーがある PR は、これ以上 dispatch されても何もしない
+          // done_marker による no-op スキップは task_key 経路のみ。
+          // workingBranch 経路（Issue 連動）は Issue label で除外する設計なので、ここでは見ない。
           if (
+            taskKey &&
+            !workingBranch &&
             (openPr.body ?? "").includes(context.inputs.doneMarker)
           ) {
             core.notice(
               `Task '${taskKey}' is marked done in PR #${openPr.number}. Skipping this dispatch.`,
             );
-            // contains_trigger を出力しないことで Run Claude Code step は自然に skip される。
-            // 明示的に false を出して、後段の if 評価でも確実に止まるようにしておく。
             core.setOutput("contains_trigger", "false");
             return;
           }

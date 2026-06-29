@@ -348,6 +348,7 @@ export function prepareContext(
         ...(context.inputs.taskKey && { taskKey: context.inputs.taskKey }),
         ...(existingPrNumber !== undefined && { existingPrNumber }),
         doneMarker: context.inputs.doneMarker,
+        ...(context.inputs.workingBranch && { workingBranchOverride: true }),
       };
       break;
 
@@ -449,27 +450,37 @@ export function generateWorkflowDispatchPrompt(
     .map(([k, v]) => `  ${k}: ${sanitizeContent(v)}`)
     .join("\n");
 
-  // タスク継続モード（task_key 指定あり）か、ワンショットモードかで PR まわりの指示を切り替える。
-  const isContinuationMode = Boolean(eventData.taskKey);
-  const hasExistingPr =
-    isContinuationMode && eventData.existingPrNumber !== undefined;
+  // モード判定:
+  //   - workingBranchOverride: ブランチ名は上位 yml が決定済み。PR / 完了判定の指示も上位の direct_prompt に委ねる
+  //   - taskKey ベース継続モード: action 側で PR 開閉と done_marker を管理
+  //   - それ以外（ワンショット）: 1 run = 1 PR
+  const isWorkingBranchOverride = Boolean(eventData.workingBranchOverride);
+  const isTaskKeyMode = !isWorkingBranchOverride && Boolean(eventData.taskKey);
+  const hasExistingPr = eventData.existingPrNumber !== undefined;
 
   let prSection: string;
-  if (!isContinuationMode) {
-    // 旧来のワンショット dispatch。1 run = 1 PR の想定。
-    prSection = `- When you are done with the work for this run, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\` (or surface a "Create a PR" link in your run summary if PR creation is not available).`;
-  } else if (hasExistingPr) {
-    // 継続モード: 既存 PR がある → 同じブランチに commit を追加するだけ
+  if (isWorkingBranchOverride) {
+    // 上位 yml が責任を持つモード（Issue 連動など）。PR の有無や完了判定は direct_prompt 側で指示される。
+    if (hasExistingPr) {
+      prSection = `- An existing OPEN pull request (#${eventData.existingPrNumber}) already has \`${eventData.claudeBranch}\` as its head. Add commits to this branch and the existing PR will pick them up. Do NOT open another PR for this branch.`;
+    } else {
+      prSection = `- No open pull request currently uses \`${eventData.claudeBranch}\` as its head. Follow the PR-handling instructions in the <direct_prompt> below (it tells you whether/when to open one and what title/body to use).`;
+    }
+  } else if (isTaskKeyMode && hasExistingPr) {
     prSection = `- This run is a CONTINUATION of an existing pull request: #${eventData.existingPrNumber}. The branch \`${eventData.claudeBranch}\` is already its head.
 - DO NOT open a new pull request. Simply commit to \`${eventData.claudeBranch}\` and the existing PR will pick up the changes.
 - If the existing PR description is missing information that future runs will need (next steps, context), feel free to update it via the GitHub API or by leaving notes in the progress file (the direct_prompt below should mention which file).`;
-  } else {
-    // 継続モード: PR が無い（= 初回 or 前回 close 済み）→ 新規 PR を作る
+  } else if (isTaskKeyMode) {
     prSection = `- This run is the FIRST step of a continuing task identified by \`task_key=${eventData.taskKey}\`. There is no existing pull request yet.
 - After your first commits, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\`. Subsequent dispatches with the same task_key will reuse this branch and add commits to that same PR.`;
+  } else {
+    // 旧来のワンショット dispatch。1 run = 1 PR の想定。
+    prSection = `- When you are done with the work for this run, open a pull request from \`${eventData.claudeBranch}\` into \`${eventData.baseBranch}\` (or surface a "Create a PR" link in your run summary if PR creation is not available).`;
   }
 
-  const doneMarkerSection = isContinuationMode
+  // done_marker 文言は task_key モード限定。workingBranchOverride モードでは
+  // 上位 yml が Issue label など別の仕組みで完了管理する。
+  const doneMarkerSection = isTaskKeyMode
     ? `
 
 Task completion handling (continuation mode):
@@ -487,7 +498,7 @@ Task completion handling (continuation mode):
 <run_id>${eventData.runId}</run_id>
 <base_branch>${eventData.baseBranch}</base_branch>
 <working_branch>${eventData.claudeBranch}</working_branch>${
-    isContinuationMode
+    isTaskKeyMode
       ? `
 <task_key>${sanitizeContent(eventData.taskKey ?? "")}</task_key>${
           hasExistingPr
@@ -496,7 +507,10 @@ Task completion handling (continuation mode):
             : ""
         }
 <done_marker>${eventData.doneMarker}</done_marker>`
-      : ""
+      : isWorkingBranchOverride && hasExistingPr
+        ? `
+<existing_pr_number>${eventData.existingPrNumber}</existing_pr_number>`
+        : ""
   }
 <dispatch_inputs>
 ${inputsBlock || "  (none)"}

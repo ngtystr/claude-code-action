@@ -102,6 +102,9 @@ type WorkflowDispatchEvent = {
   taskKey?: string;
   existingPrNumber?: number;
   doneMarker: string;
+  // workingBranch がセットされていれば、claudeBranch は呼び出し側で確定したブランチ名であり、
+  // PR まわり / 完了判定の指示は呼び出し側の direct_prompt 側に委ねる（Issue 連動など）。
+  workingBranchOverride?: boolean;
 };
 
 // Union type for all possible event types

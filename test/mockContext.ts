@@ -23,6 +23,7 @@ const defaultInputs = {
   useStickyComment: false,
   taskKey: "",
   doneMarker: "<!-- opportunistic-task-done -->",
+  workingBranch: "",
 };
 
 const defaultRepository = {

@@ -71,6 +71,7 @@ describe("checkWritePermissions", () => {
       useStickyComment: false,
       taskKey: "",
       doneMarker: "<!-- opportunistic-task-done -->",
+      workingBranch: "",
     },
   });
 
