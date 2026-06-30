@@ -239,8 +239,25 @@ runs:
       if: steps.prepare.outputs.contains_trigger == 'true' && steps.claude-code.outputs.execution_file != ''
       shell: bash
       run: |
+        # NOTE: execution_file が出力先パスとして渡っても、実体ファイルが無い場合がある。
+        # 典型例: base-action 内で claude CLI の stdout が child_process の maxBuffer (1MB)
+        # を超えて RangeError [ERR_CHILD_PROCESS_STDIO_MAXBUFFER] になり、JSON が書き出せなかった
+        # ケース。タスク本体は先行 step で完了済みのことが多いので、ここは赤で止めずに
+        # サマリーに警告だけ出して exit 0 で抜ける。
+        EXEC_FILE="${{ steps.claude-code.outputs.execution_file }}"
+        if [ ! -f "$EXEC_FILE" ]; then
+          {
+            echo "## Claude Code Report (unavailable)"
+            echo ""
+            echo "\`execution_file\` (\`$EXEC_FILE\`) が生成されていません。"
+            echo "base-action 側で claude CLI の stdout が maxBuffer (1MB) を超えた可能性が高いです。"
+            echo "タスク本体は先行 step で完了している場合があるため、commit / PR / Issue コメントを確認してください。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
         # Try to format the turns, but if it fails, dump the raw JSON
-        if bun run ${{ github.action_path }}/src/entrypoints/format-turns.ts "${{ steps.claude-code.outputs.execution_file }}" >> $GITHUB_STEP_SUMMARY 2>/dev/null; then
+        if bun run ${{ github.action_path }}/src/entrypoints/format-turns.ts "$EXEC_FILE" >> $GITHUB_STEP_SUMMARY 2>/dev/null; then
           echo "Successfully formatted Claude Code report"
         else
           echo "## Claude Code Report (Raw Output)" >> $GITHUB_STEP_SUMMARY
@@ -248,7 +265,7 @@ runs:
           echo "Failed to format output (please report). Here's the raw JSON:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
-          cat "${{ steps.claude-code.outputs.execution_file }}" >> $GITHUB_STEP_SUMMARY
+          cat "$EXEC_FILE" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         fi
 
